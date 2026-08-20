@@ -511,9 +511,16 @@ function CtaBanner({ onRegister }) {
 /* --------------------------------- FOOTER ----------------------------------- */
 
 const SOCIALS = [
-  { Icon: Instagram, label: "Instagram", href: "https://instagram.com" },
-  { Icon: Youtube, label: "YouTube", href: "https://youtube.com" },
-  { Icon: Facebook, label: "Facebook", href: "https://facebook.com" },
+  {
+    Icon: Instagram,
+    label: "Instagram",
+    href: "https://www.instagram.com/tureporte.do?igsh=bDh3NzBka2Nyc3Bz&utm_source=qr",
+  },
+  {
+    Icon: Youtube,
+    label: "YouTube",
+    href: "https://www.youtube.com/@Tureporterd",
+  },
 ];
 
 function Footer() {
@@ -565,7 +572,7 @@ function Footer() {
           <div>
             <p className="text-white text-xs font-bold uppercase tracking-wider mb-4">Contacto</p>
             <ul className="space-y-2.5 text-sm text-slate-400">
-              <li>hola@tureporte.do</li>
+              <li>atencion@tureporte.do</li>
               <li>Santo Domingo, República Dominicana</li>
             </ul>
           </div>

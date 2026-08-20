@@ -158,34 +158,6 @@ export function deactivateRoutingRule(ruleId) {
 /* ---------------------------------------------------------------------------
    reports — hecho central, con contenido base realista por semilla
 --------------------------------------------------------------------------- */
-const REPORT_SEEDS = [
-  { desc: "Bache profundo en la Av. Independencia que ya ha dañado varios vehículos.", category: "calles", zone: "dn" },
-  { desc: "Poste de luz apagado desde hace dos semanas en la calle Duarte; la zona queda muy oscura de noche.", category: "alumbrado", zone: "sde" },
-  { desc: "Acumulación de basura en el solar baldío junto al colmado; atrae insectos y mal olor.", category: "basura", zone: "sdn" },
-  { desc: "Alcantarilla destapada representa un peligro serio para peatones y motoristas.", category: "alcantarillado", zone: "sdo" },
-  { desc: "Llevamos 5 días sin agua en el sector; varias familias no tienen cómo abastecerse.", category: "agua", zone: "alc" },
-  { desc: "Vertido de aguas residuales está contaminando la cañada cercana al parque.", category: "ambiente", zone: "bch" },
-  { desc: "Un colmado ha invadido la acera con mesas y sillas, obligando a los peatones a caminar por la calle.", category: "ocupacion", zone: "dn" },
-  { desc: "Semáforo dañado en un cruce peligroso cerca de la escuela primaria.", category: "calles", zone: "sde" },
-  { desc: "Tapa de alcantarilla robada; ya hubo un motorista que casi cae dentro.", category: "alcantarillado", zone: "dn" },
-  { desc: "Fuga de agua potable corriendo por la calle desde hace tres días sin atención.", category: "agua", zone: "sdn" },
-  { desc: "Zona sin alumbrado genera inseguridad para quienes regresan de noche del trabajo.", category: "alumbrado", zone: "sdo" },
-  { desc: "Basura acumulada frente al parque infantil, riesgo para los niños que juegan ahí.", category: "basura", zone: "alc" },
-  { desc: "La quema de basura a cielo abierto está afectando la respiración de varias familias.", category: "ambiente", zone: "pbr" },
-  { desc: "Vendedores ambulantes ocupan el espacio público sin permiso, dificultando el paso de sillas de ruedas.", category: "ocupacion", zone: "sag" },
-  { desc: "Calle completamente inundada tras la lluvia; queda intransitable por horas.", category: "calles", zone: "bch" },
-  { desc: "Cables eléctricos sueltos y a baja altura representan riesgo de incendio.", category: "otro", zone: "sde" },
-  { desc: "Contenedor de basura desbordado desde hace más de una semana sin recolección.", category: "basura", zone: "dn" },
-  { desc: "Falta de presión de agua afecta a todo el residencial desde el fin de semana.", category: "agua", zone: "sdo" },
-  { desc: "Árbol caído bloquea parcialmente la vía principal tras la tormenta.", category: "ambiente", zone: "alc" },
-  { desc: "Parque comunitario con equipos dañados y vidrios rotos en el área de juegos.", category: "otro", zone: "sag" },
-  { desc: "Calle sin señalización adecuada ha provocado varios accidentes menores.", category: "calles", zone: "sdn" },
-  { desc: "Fuerte olor a gas cerca del mercado municipal; los vecinos están preocupados.", category: "otro", zone: "dn" },
-  { desc: "Cañada acumula desechos plásticos y genera criaderos de mosquitos.", category: "ambiente", zone: "sde" },
-  { desc: "Bomba de agua comunitaria dañada; el sector completo se queda sin servicio.", category: "agua", zone: "pbr" },
-  { desc: "Poste inclinado a punto de caer sobre la acera tras las últimas lluvias.", category: "alumbrado", zone: "bch" },
-  { desc: "Depósito de escombros de construcción abandonado ocupa media calle.", category: "ocupacion", zone: "sdo" },
-];
 
 function pick(arr) { return arr[Math.floor(rand() * arr.length)]; }
 
