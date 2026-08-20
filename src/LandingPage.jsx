@@ -279,12 +279,7 @@ const FEATURES = [
     desc: "Línea de tiempo de cada reporte: recibido, en proceso, resuelto. Sin llamadas ni filas.",
     color: "from-purple-400 to-purple-600",
   },
-  {
-    Icon: Trophy,
-    title: "Gamificación y puntos",
-    desc: "Gana puntos, sube de nivel y desbloquea logros por participar activamente en tu comunidad.",
-    color: "from-amber-400 to-yellow-500",
-  },
+ 
   {
     Icon: BarChart3,
     title: "Paneles para instituciones",

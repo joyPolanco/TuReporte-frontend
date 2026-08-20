@@ -1,4 +1,10 @@
-import React, { useState, useMemo, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useMemo,
+  useRef,
+  useCallback,
+  useEffect,
+} from "react";
 import {
   Home,
   Map as MapIcon,
@@ -82,6 +88,9 @@ import {
   History,
   Settings2,
   Flame,
+  Edit2,
+  Save,
+  XCircle,
 } from "lucide-react";
 import {
   BarChart,
@@ -100,16 +109,40 @@ import {
 } from "recharts";
 import LandingPage from "./LandingPage.jsx";
 
-/* ============================================================================
-   TuReporte — MVP de frontend (React + Tailwind)
-   Todo el contenido (usuarios, reportes, catálogo, instituciones) es simulado
-   en memoria. No hay backend real: sirve para validar flujo, UX y arquitectura
-   de una plataforma profesional de gestión de incidencias ciudadanas.
+// --- MAPA PROFESIONAL CON LEAFLET ---
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  CircleMarker,
+  useMap,
+  ZoomControl,
+} from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
-   MODELO OPERATIVO: Reportar → Validar → Clasificar → Asignar → Gestionar →
-   Verificar → Resolver → Cerrar → Auditar. Ver TRANSITIONS más abajo para las
-   transiciones de estado válidas por rol.
-============================================================================ */
+// Fix para iconos de Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
+  iconUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+  shadowUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+});
+
+// ============================================================================
+// TuReporte — MVP de frontend (React + Tailwind)
+// Todo el contenido (usuarios, reportes, catálogo, instituciones) es simulado
+// en memoria. No hay backend real: sirve para validar flujo, UX y arquitectura
+// de una plataforma profesional de gestión de incidencias ciudadanas.
+//
+// MODELO OPERATIVO: Reportar → Validar → Clasificar → Asignar → Gestionar →
+// Verificar → Resolver → Cerrar → Auditar. Ver TRANSITIONS más abajo para las
+// transiciones de estado válidas por rol.
+// ============================================================================
 
 /* ---------------------------------- ROLES --------------------------------- */
 
@@ -900,20 +933,7 @@ const PRIORITY_META = {
 };
 const PRIORITY_ORDER = ["baja", "media", "alta", "critica"];
 
-/* --------------------------- MOTOR DE REGLAS (§33) --------------------------
-   Reglas IF/THEN configurables por el Administrador que se aplican en
-   handlePublish (creación) y handleReportAction (clasificación/asignación),
-   sin modificar los valores por defecto existentes (zoneToInstitution,
-   PRIORITY_META, findRecurringProblems): mientras no haya reglas activas que
-   apliquen, el comportamiento es idéntico al actual. Una regla solo entra en
-   juego cuando coincide y está habilitada — "first match wins", en el orden
-   en que el administrador las creó.
-
-     · routing:  IF categoría [+ subcategoría] THEN institución
-     · sla:      IF prioridad THEN SLA (horas)
-     · notifySlaBreach: IF SLA vencido THEN notificar al supervisor (on/off)
-     · recurring: IF ≥N incidencias misma zona/categoría en X días THEN
-       sugerir problema recurrente (umbral configurable de findRecurringProblems) */
+/* --------------------------- MOTOR DE REGLAS (§33) -------------------------- */
 const DEFAULT_RULES = {
   routing: [],
   sla: [],
@@ -952,12 +972,7 @@ function getRecurringThreshold(rules) {
   };
 }
 
-/* --------------------------- TAREAS (§8 del brief) -------------------------
-   Una incidencia asignada puede desglosarse en tareas de trabajo, cada una
-   con responsable, estado y dependencias ("Tarea 3 no puede iniciar hasta
-   completar Tarea 2"). No son un rol nuevo: las ejecuta el responsable de
-   campo (Institución → Departamento → Responsable), el Gestor las crea y
-   supervisa. */
+/* --------------------------- TAREAS (§8 del brief) ------------------------- */
 const TASK_STATUS_META = {
   pendiente: {
     label: "Pendiente",
@@ -985,10 +1000,6 @@ const TASK_STATUS_META = {
   },
 };
 
-/* Plantilla estándar de tareas de gestión (§8, ejemplo INC-00184). La tarea
-   "Realizar reparación" depende explícitamente de "Determinar causa" — el
-   resto puede avanzar en paralelo. Se instancia por incidencia, nunca se
-   comparte entre incidencias. */
 const DEFAULT_TASK_TEMPLATE = [
   {
     key: "inspeccionar",
@@ -1055,9 +1066,7 @@ const INSPECTION_RESULT_META = {
 };
 const INSPECTION_RESULT_ORDER = Object.keys(INSPECTION_RESULT_META);
 
-/* Transiciones válidas por estado. `roles` = quién puede ejecutarla,
-   `reason` = si el motivo es obligatorio (ver §3/§9 del brief: rechazar,
-   duplicar, reclasificar, escalar y cerrar-tras-reapertura siempre piden motivo). */
+/* Transiciones válidas por estado. */
 const TRANSITIONS = {
   nuevo: [
     {
@@ -1316,9 +1325,7 @@ function findPossibleDuplicates(report, allReports) {
 
 /* Detecta problemas estructurales/recurrentes: 3+ incidencias de la misma
    subcategoría en la misma zona dentro de los últimos 30 días — señal de que
-   el problema no es puntual sino de infraestructura. El umbral (3) y la
-   ventana (30 días) son los valores por defecto; el Motor de Reglas (§33)
-   permite al Administrador reconfigurarlos sin tocar esta función. */
+   el problema no es puntual sino de infraestructura. */
 function findRecurringProblems(report, allReports, rules) {
   const { minCount, windowDays } = getRecurringThreshold(rules);
   const WINDOW = windowDays * 86400000;
@@ -1332,19 +1339,7 @@ function findRecurringProblems(report, allReports, rules) {
   return related.length >= minCount ? related : [];
 }
 
-/* --------------------------- HOTSPOTS (§27) --------------------------------
-   Detecta zonas con alta concentración de incidencias ACTIVAS (todavía no
-   cerradas/rechazadas) dentro de una ventana reciente — es la señal que
-   alimenta "Sectores calientes" en el Mapa Operacional. A diferencia de
-   findRecurringProblems (que exige la MISMA categoría en la MISMA zona, y se
-   usa para sugerir un caso maestro sobre un reporte puntual), un hotspot mide
-   la carga TOTAL sobre una zona sin importar la categoría: lo que le importa
-   al supervisor es "¿qué sector necesita más atención ahora mismo?".
-
-   El umbral real de un despliegue con miles de incidencias sería alto (el
-   brief sugiere 15+); en esta demo con datos mock reducidos se usa un valor
-   menor para que el hotspot sea observable, pero queda como constante única
-   fácil de subir en producción. */
+/* --------------------------- HOTSPOTS (§27) -------------------------------- */
 const HOTSPOT_MIN_ACTIVE = 4;
 const HOTSPOT_WINDOW_DAYS = 30;
 
@@ -1815,7 +1810,6 @@ const REPORT_SEEDS = [
   },
 
   // MEDIO AMBIENTE
-
   {
     desc: "Árbol caído bloquea parcialmente la vía principal tras la tormenta.",
     category: "ambiente",
@@ -1826,7 +1820,6 @@ const REPORT_SEEDS = [
   },
 
   // ESPACIO PÚBLICO - OCUPACIÓN
-
   {
     desc: "Vendedores ambulantes ocupan el espacio público sin permiso, dificultando el paso.",
     category: "ocupacion",
@@ -2043,19 +2036,16 @@ function buildReports() {
     const authorId = citizenIds[Math.floor(rand() * citizenIds.length)];
 
     // --- GENERACIÓN DE IMÁGENES CON URLS REALES DE INTERNET ---
-    const photoCount = 1 + Math.floor(rand() * 1); // 1 o 2 fotos
+    const photoCount = 1 + Math.floor(rand() * 1);
     const photos = [seed.imgUrl];
 
-    // Si hay segunda foto, usamos la misma URL con diferente parámetro o una variante
     if (photoCount > 1) {
       photos.push(seed.imgUrl + "?v=2");
     }
 
-    // Si es prioridad crítica o alta, añadimos una foto adicional
     if (priority === "critica" || priority === "alta") {
       photos.push(seed.imgUrl + "?v=critico");
     }
-    // --- FIN DE GENERACIÓN DE IMÁGENES ---
 
     const daysAgo = 1 + Math.floor(rand() * 26);
     const institutionId = zoneToInstitution(seed.zone, seed.category);
@@ -2090,8 +2080,7 @@ function buildReports() {
     const num = String(i + 1).padStart(6, "0");
     const code = `INC-${new Date(createdAt).getFullYear()}-${num}`;
 
-    // Timeline / bitácora de auditoría — construida en el mismo orden en que
-    // ocurriría el flujo real, hasta el estado actual del reporte.
+    // Timeline / bitácora de auditoría
     const timeline = [
       {
         at: createdAt,
@@ -2279,11 +2268,7 @@ const isOverdue = (r) => isActiveReport(r) && slaRemaining(r) < 0;
 const isDueSoon = (r) =>
   isActiveReport(r) && slaRemaining(r) >= 0 && slaRemaining(r) <= 6;
 
-/* ------------------------- CASO ESTANCADO (§13 del brief) ------------------
-   Un caso "estancado" es uno activo sin ninguna acción registrada en su
-   timeline durante un período configurable. Se mide contra la última entrada
-   real de timeline (no contra createdAt), porque lo que importa es inacción,
-   no antigüedad. */
+/* ------------------------- CASO ESTANCADO (§13 del brief) ------------------ */
 const STAGNANT_THRESHOLD_HOURS = 48;
 function lastActivityAt(report) {
   const tl = report.timeline || [];
@@ -2294,9 +2279,6 @@ function hoursSinceActivity(report) {
 }
 const isStagnant = (r) =>
   isActiveReport(r) && hoursSinceActivity(r) >= STAGNANT_THRESHOLD_HOURS;
-/* "Sin asignar" solo aplica una vez que el caso ya pasó triage/validación
-   (nuevo, en_revision, requiere_info son estados previos a la asignación
-   por diseño — no cuentan como "sin responsable" todavía). */
 const NOT_YET_ASSIGNABLE_STATUSES = [
   "nuevo",
   "en_revision",
@@ -2309,10 +2291,7 @@ const isUnassigned = (r) =>
   !r.responsable &&
   !NOT_YET_ASSIGNABLE_STATUSES.includes(r.status);
 
-/* ------------------------- CASE HEALTH (§11 del brief) ---------------------
-   Semáforo de salud del caso: no es un campo guardado, se deriva en cada
-   render a partir de señales objetivas (SLA, asignación, inactividad,
-   escalamiento) — así nunca queda desincronizado del resto del expediente. */
+/* ------------------------- CASE HEALTH (§11 del brief) --------------------- */
 const CASE_HEALTH_META = {
   healthy: {
     label: "Healthy",
@@ -2368,8 +2347,6 @@ function getCaseHealth(report) {
 }
 
 /* -------------------------------- NOTIFICACIONES --------------------------------- */
-/* Se derivan de eventos reales (últimas entradas de línea de tiempo + estado
-   de SLA) — no hay notificaciones "de relleno". Cada rol ve solo lo suyo. */
 const NOTIFY_STATUSES = new Set([
   "validado",
   "asignado",
@@ -2447,14 +2424,7 @@ function citizenNotifLabel(status, r) {
   return map[status] || `Actualización: ${STATUS_META[status]?.label}`;
 }
 
-/* --------------------------- AUDITORÍA GLOBAL (§36) ------------------------
-   No se crea un modelo de datos nuevo: cada `timeline` ya registrado por
-   handleReportAction / handleAddEvidence / handleAddTask / etc. y por los
-   casos maestros (§16/§17) YA es la bitácora auditable (usuario, fecha,
-   acción, motivo). Esta función solo aplana esas líneas de tiempo —de todos
-   los reportes y casos maestros— en un log único y ordenado, e infiere
-   "campo / valor anterior / valor nuevo" a partir de los `toStatus`
-   encadenados de cada expediente (el primer estado siempre es "nuevo"). */
+/* --------------------------- AUDITORÍA GLOBAL (§36) ------------------------ */
 function buildAuditLog(reports, masterCases) {
   const entries = [];
   reports.forEach((r) => {
@@ -2542,28 +2512,7 @@ function exportAuditCsv(entries, filename) {
   URL.revokeObjectURL(url);
 }
 
-/* --------------------------- DASHBOARD EJECUTIVO (§29/§30) -----------------
-   KPIs de gestión calculados en tiempo real a partir de datos que YA existen
-   en cada expediente (timeline, dueAt, reopenedCount) — nada se inventa ni
-   se simula con números aleatorios. Se reutiliza en AdminDashboard.
-     · First Response Time  = de creación a la primera transición real de
-       estado (el primer timeline[i].toStatus distinto de "nuevo").
-     · Average Resolution Time = de creación al timeline que marcó el estado
-       actual, para expedientes resuelto/cerrado (mismo criterio que ya usa
-       GestorStats para su "tiempo promedio").
-     · SLA Compliance % = de los expedientes que llegaron a tener SLA
-       (dueAt asignado), qué proporción se cerró a tiempo o, si siguen
-       activos, no está vencida ahora mismo.
-     · Backlog = expedientes activos (no cerrados/resueltos/rechazados/
-       duplicados) en este momento — usa isActiveReport, ya existente.
-     · Aging = antigüedad promedio (horas) de los expedientes activos.
-     · Reopen Rate % = expedientes con reopenedCount > 0, sobre el total de
-       expedientes que en algún momento llegaron a cerrarse.
-     · Escalation Rate % = expedientes que pasaron por "escalado" alguna
-       vez, sobre el total.
-     · Resolution Rate % = resuelto/cerrado sobre el total (mismo número que
-       ya mostraba el panel administrativo, aquí como parte del set oficial
-       de §30). */
+/* --------------------------- DASHBOARD EJECUTIVO (§29/§30) ----------------- */
 function formatKpiHours(h) {
   if (h === null || h === undefined || Number.isNaN(h)) return "—";
   if (h < 48) return `${Math.round(h)}h`;
@@ -2628,7 +2577,7 @@ function computeExecutiveKpis(reports) {
       return closingEntry.at <= r.dueAt;
     }
     if (isActiveReport(r)) return !isOverdue(r);
-    return true; // rechazado/duplicado: no aplica incumplimiento de SLA
+    return true;
   }).length;
   const slaCompliancePct = withSla.length
     ? (slaCompliant / withSla.length) * 100
@@ -2759,8 +2708,6 @@ function CategoryPill({ id }) {
     </span>
   );
 }
-/** Semáforo de salud del caso (§11). `title` trae las razones para el tooltip
-    nativo — sin inventar un panel nuevo solo para explicar el color. */
 function CaseHealthBadge({ report, compact = false }) {
   const health = getCaseHealth(report);
   if (!health) return null;
@@ -2842,487 +2789,6 @@ function Logo({ size = 34 }) {
       >
         Tu<span className="text-teal-600">Reporte</span>
       </span>
-    </div>
-  );
-}
-
-/* ------------------------------- ZONE MAP -------------------------------- */
-
-function densityStyle(count) {
-  if (count === 0)
-    return {
-      bg: "bg-slate-100",
-      text: "text-slate-400",
-      border: "border-2 border-dashed border-slate-300",
-    };
-  if (count <= 2)
-    return {
-      bg: "bg-teal-100",
-      text: "text-teal-800",
-      border: "border border-teal-300",
-    };
-  if (count <= 4)
-    return {
-      bg: "bg-teal-300",
-      text: "text-teal-950",
-      border: "border border-teal-400",
-    };
-  if (count <= 6)
-    return {
-      bg: "bg-orange-400",
-      text: "text-white",
-      border: "border border-orange-500",
-    };
-  return {
-    bg: "bg-red-500",
-    text: "text-white",
-    border: "border border-red-600",
-  };
-}
-
-function hashOffset(id, mod) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997;
-  return h % mod;
-}
-
-function ZoneMap({
-  reports,
-  selectedZone,
-  onSelectZone,
-  height = 380,
-  mode,
-  onModeChange,
-  institutionFilter,
-  hotspotZoneIds = [],
-}) {
-  const filtered = institutionFilter
-    ? reports.filter((r) => r.institutionId === institutionFilter)
-    : reports;
-  const counts = useMemo(() => {
-    const c = {};
-    ZONES.forEach((z) => (c[z.id] = 0));
-    filtered.forEach((r) => {
-      if (c[r.zone] !== undefined) c[r.zone]++;
-    });
-    return c;
-  }, [filtered]);
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-        <div className="flex items-center gap-2 text-slate-700">
-          <Layers size={16} className="text-teal-600" />
-          <span className="text-sm font-semibold">
-            Mapa de concentración de reportes
-          </span>
-        </div>
-        {onModeChange && (
-          <div className="flex rounded-full bg-slate-100 p-0.5 text-xs font-semibold">
-            <button
-              onClick={() => onModeChange("city")}
-              className={`px-3 py-1 rounded-full transition ${mode === "city" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
-            >
-              Gran Santo Domingo
-            </button>
-            <button
-              onClick={() => onModeChange("national")}
-              className={`px-3 py-1 rounded-full transition ${mode === "national" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
-            >
-              Nivel nacional
-            </button>
-          </div>
-        )}
-      </div>
-
-      {mode === "national" ? (
-        <div
-          className="relative bg-gradient-to-b from-sky-50 to-teal-50"
-          style={{ height }}
-        >
-          {NATIONAL_REGIONS.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => r.active && onModeChange && onModeChange("city")}
-              className={`absolute rounded-[40%] flex flex-col items-center justify-center text-center px-2 transition hover:scale-105 ${
-                r.active
-                  ? "bg-teal-400 text-white shadow-lg"
-                  : "bg-slate-200 text-slate-500 border-2 border-dashed border-slate-300"
-              }`}
-              style={{
-                top: r.top,
-                left: r.left,
-                width: r.size,
-                height: r.size * 0.75,
-              }}
-            >
-              <span className="text-[11px] font-bold leading-tight">
-                {r.name}
-              </span>
-              <span className="text-[10px] mt-0.5 opacity-90">
-                {r.active
-                  ? `${filtered.length} reportes`
-                  : "Fase 2 · próximamente"}
-              </span>
-            </button>
-          ))}
-          <p className="absolute bottom-2 left-3 text-[10px] text-slate-400">
-            Mapa esquemático ilustrativo · no a escala geográfica
-          </p>
-        </div>
-      ) : (
-        <div className="relative" style={{ height }}>
-          <div className="absolute inset-0 bg-gradient-to-b from-sky-50 via-teal-50/60 to-white" />
-          {ZONES.map((z) => {
-            const count = counts[z.id] || 0;
-            const style = densityStyle(count);
-            const isSelected = selectedZone === z.id;
-            const isHotspot = hotspotZoneIds.includes(z.id);
-            const zoneReports = filtered
-              .filter((r) => r.zone === z.id)
-              .slice(0, 8);
-            return (
-              <div
-                key={z.id}
-                className="absolute"
-                style={{
-                  top: z.top,
-                  left: z.left,
-                  width: z.size,
-                  height: z.size * 0.8,
-                }}
-              >
-                <button
-                  onClick={() => onSelectZone(isSelected ? null : z.id)}
-                  className={`relative w-full h-full rounded-[38%] flex flex-col items-center justify-center transition-all hover:scale-105 ${style.bg} ${style.text} ${style.border} ${
-                    isSelected
-                      ? "ring-4 ring-blue-500 ring-offset-2"
-                      : isHotspot
-                        ? "ring-4 ring-red-400 ring-offset-1 animate-pulse"
-                        : ""
-                  }`}
-                >
-                  {isHotspot && (
-                    <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center shadow-md border border-white">
-                      <Flame size={11} />
-                    </span>
-                  )}
-                  <span className="text-[11px] font-bold leading-tight px-1 text-center">
-                    {z.name}
-                  </span>
-                  <span className="tr-mono text-lg font-bold leading-none mt-1">
-                    {count}
-                  </span>
-                  <span className="text-[9px] opacity-80">reportes</span>
-                  {zoneReports.map((r, idx) => (
-                    <span
-                      key={r.id}
-                      className={`absolute w-2 h-2 rounded-full ${getCategory(r.category).dot} border border-white`}
-                      style={{
-                        top: `${15 + hashOffset(r.id, 60)}%`,
-                        left: `${15 + hashOffset(r.id + "x", 60)}%`,
-                      }}
-                    />
-                  ))}
-                </button>
-              </div>
-            );
-          })}
-          <p className="absolute bottom-2 left-3 text-[10px] text-slate-400">
-            Mapa esquemático por municipio · el tamaño de color indica densidad
-            de reportes
-          </p>
-        </div>
-      )}
-
-      <div className="flex items-center gap-3 px-4 py-2.5 border-t border-slate-100 text-[11px] text-slate-500 flex-wrap">
-        <span className="font-semibold text-slate-600">Densidad:</span>
-        <span className="flex items-center gap-1">
-          <i className="w-2.5 h-2.5 rounded-full bg-teal-100 border border-teal-300 inline-block" />{" "}
-          Baja
-        </span>
-        <span className="flex items-center gap-1">
-          <i className="w-2.5 h-2.5 rounded-full bg-teal-300 inline-block" />{" "}
-          Media
-        </span>
-        <span className="flex items-center gap-1">
-          <i className="w-2.5 h-2.5 rounded-full bg-orange-400 inline-block" />{" "}
-          Alta
-        </span>
-        <span className="flex items-center gap-1">
-          <i className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />{" "}
-          Crítica
-        </span>
-        <span className="flex items-center gap-1 ml-1 pl-2 border-l border-slate-200">
-          <Flame size={11} className="text-red-500" /> Sector caliente (
-          {HOTSPOT_MIN_ACTIVE}+ activas en {HOTSPOT_WINDOW_DAYS}d)
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* Mapa operativo para gestor/administrador: filtros (categoría, prioridad,
-   estado, institución) + detección de concentraciones/problemas recurrentes
-   por zona (§19-20). */
-function OperationalMap({
-  reports,
-  institutionScope,
-  mapMode,
-  setMapMode,
-  onOpenReport,
-  title,
-  eyebrow,
-}) {
-  const [catF, setCatF] = useState("todas");
-  const [prioF, setPrioF] = useState("todas");
-  const [statF, setStatF] = useState("todas");
-  const [instF, setInstF] = useState(institutionScope || "todas");
-  const [selectedZone, setSelectedZone] = useState(null);
-
-  const filtered = reports
-    .filter((r) => !institutionScope || r.institutionId === institutionScope)
-    .filter((r) => catF === "todas" || r.category === catF)
-    .filter((r) => prioF === "todas" || r.priority === prioF)
-    .filter((r) => statF === "todas" || r.status === statF)
-    .filter((r) => instF === "todas" || r.institutionId === instF);
-
-  const zoneConcentration = ZONES.map((z) => {
-    const inZone = filtered.filter((r) => r.zone === z.id);
-    const byCat = {};
-    inZone.forEach((r) => {
-      byCat[r.category] = (byCat[r.category] || 0) + 1;
-    });
-    const topCat = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
-    return {
-      zone: z,
-      count: inZone.length,
-      topCat: topCat ? { id: topCat[0], count: topCat[1] } : null,
-    };
-  })
-    .filter((z) => z.topCat && z.topCat.count >= 3)
-    .sort((a, b) => b.topCat.count - a.topCat.count);
-
-  // Hotspots (§27): a diferencia de zoneConcentration (misma categoría en el
-  // set ya filtrado por la UI), un hotspot mide la carga TOTAL activa reciente
-  // de la zona, calculada sobre el alcance institucional pero SIN los filtros
-  // manuales de categoría/prioridad/estado — es una señal operacional de
-  // ciudad, no debería desaparecer solo porque alguien filtró por "Crítica".
-  const scopedReports = reports.filter(
-    (r) => !institutionScope || r.institutionId === institutionScope,
-  );
-  const hotspots = findHotspots(scopedReports);
-  const hotspotZoneIds = hotspots.map((h) => h.zone.id);
-  const selectedHotspot = selectedZone
-    ? hotspots.find((h) => h.zone.id === selectedZone)
-    : null;
-  const selectedZoneReports = selectedZone
-    ? filtered
-        .filter((r) => r.zone === selectedZone)
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, 6)
-    : [];
-
-  const selectZoneFromHotspot = (zoneId) => {
-    setMapMode("city");
-    setSelectedZone((z) => (z === zoneId ? null : zoneId));
-  };
-
-  return (
-    <div className="max-w-3xl mx-auto px-4 pt-4 pb-6">
-      <SectionHeading eyebrow={eyebrow} title={title} />
-
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <select
-          value={catF}
-          onChange={(e) => setCatF(e.target.value)}
-          className="text-xs font-semibold rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 outline-none"
-        >
-          <option value="todas">Todas las categorías</option>
-          {CATEGORIES.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={prioF}
-          onChange={(e) => setPrioF(e.target.value)}
-          className="text-xs font-semibold rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 outline-none"
-        >
-          <option value="todas">Toda prioridad</option>
-          {PRIORITY_ORDER.map((p) => (
-            <option key={p} value={p}>
-              {PRIORITY_META[p].label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={statF}
-          onChange={(e) => setStatF(e.target.value)}
-          className="text-xs font-semibold rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 outline-none"
-        >
-          <option value="todas">Todo estado</option>
-          {STATUS_ORDER.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_META[s].label}
-            </option>
-          ))}
-        </select>
-        {!institutionScope && (
-          <select
-            value={instF}
-            onChange={(e) => setInstF(e.target.value)}
-            className="text-xs font-semibold rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600 outline-none"
-          >
-            <option value="todas">Toda institución</option>
-            {INSTITUTIONS.filter((i) => i.id !== "otra").map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.short}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-
-      <ZoneMap
-        reports={filtered}
-        selectedZone={selectedZone}
-        onSelectZone={setSelectedZone}
-        mode={mapMode}
-        onModeChange={setMapMode}
-        institutionFilter={institutionScope}
-        height={360}
-        hotspotZoneIds={hotspotZoneIds}
-      />
-
-      {hotspots.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
-          <p className="text-sm font-bold text-red-800 mb-1 flex items-center gap-1.5">
-            <Flame size={14} /> Sectores calientes
-          </p>
-          <p className="text-[11px] text-red-700 mb-3">
-            Zonas con {HOTSPOT_MIN_ACTIVE} o más incidencias activas en los
-            últimos {HOTSPOT_WINDOW_DAYS} días — concentración de carga que
-            amerita atención territorial, sin importar la categoría. Toca un
-            sector para verlo en el mapa.
-          </p>
-          <div className="space-y-2">
-            {hotspots.map((h) => {
-              const isSel = selectedZone === h.zone.id;
-              return (
-                <button
-                  key={h.zone.id}
-                  onClick={() => selectZoneFromHotspot(h.zone.id)}
-                  className={`w-full flex items-center justify-between rounded-xl border px-3 py-2 text-left transition ${
-                    isSel
-                      ? "bg-red-600 border-red-600 text-white"
-                      : "bg-white border-red-100 hover:border-red-300"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`text-xs font-semibold ${isSel ? "text-white" : "text-slate-700"}`}
-                    >
-                      {h.zone.name}
-                    </span>
-                    {h.critical > 0 && (
-                      <span
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isSel ? "bg-red-800 text-white" : "bg-red-100 text-red-700"}`}
-                      >
-                        {h.critical} alta/crítica
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={`text-xs font-bold ${isSel ? "text-white" : "text-red-700"}`}
-                  >
-                    {h.count} activas · {getCategory(h.topCat.id).label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {selectedHotspot && (
-            <div className="mt-3 rounded-xl bg-white border border-red-100 p-3">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-bold text-slate-700">
-                  Incidencias recientes en {selectedHotspot.zone.name}
-                </p>
-                <button
-                  onClick={() => setSelectedZone(null)}
-                  className="text-[11px] font-semibold text-slate-400 hover:text-slate-600"
-                >
-                  Cerrar
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {selectedZoneReports.length === 0 && (
-                  <p className="text-[11px] text-slate-400">
-                    Ningún reporte visible con los filtros actuales — ajusta
-                    categoría/prioridad/estado arriba.
-                  </p>
-                )}
-                {selectedZoneReports.map((r) => {
-                  const meta = STATUS_META[r.status];
-                  return (
-                    <button
-                      key={r.id}
-                      onClick={() => onOpenReport(r.id)}
-                      className="w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50 text-left"
-                    >
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${getCategory(r.category).dot}`}
-                        />
-                        <span className="text-[11px] font-semibold text-slate-700 truncate">
-                          {r.code}
-                        </span>
-                        <span className="text-[11px] text-slate-400 truncate">
-                          {getCategory(r.category).label}
-                        </span>
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${meta.badge}`}
-                      >
-                        {meta.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {zoneConcentration.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-bold text-amber-800 mb-1 flex items-center gap-1.5">
-            <AlertTriangle size={14} /> Problemas recurrentes detectados
-          </p>
-          <p className="text-[11px] text-amber-700 mb-3">
-            Zonas con 3 o más incidencias de la misma categoría — posible
-            problema estructural, no puntual.
-          </p>
-          <div className="space-y-2">
-            {zoneConcentration.map((z) => (
-              <div
-                key={z.zone.id}
-                className="flex items-center justify-between bg-white rounded-xl border border-amber-100 px-3 py-2"
-              >
-                <span className="text-xs font-semibold text-slate-700">
-                  {z.zone.name}
-                </span>
-                <span className="text-xs font-bold text-amber-700">
-                  {z.topCat.count} × {getCategory(z.topCat.id).label}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -3625,7 +3091,7 @@ const OCR_STEPS = [
 
 function RegisterOcrStep({ form, onBack, onDone, showToast, onHome }) {
   const [file, setFile] = useState(null);
-  const [status, setStatus] = useState("idle"); // idle | processing | success | error
+  const [status, setStatus] = useState("idle");
   const [stepIdx, setStepIdx] = useState(0);
   const inputRef = useRef(null);
 
@@ -3793,9 +3259,476 @@ function RegisterOcrStep({ form, onBack, onDone, showToast, onHome }) {
   );
 }
 
-/* ============================================================================
-   SHELL / NAVIGATION
-============================================================================ */
+// ============================================================================
+// COMPONENTE DE MAPA PROFESIONAL
+// ============================================================================
+
+// Colores por categoría para marcadores
+const CATEGORY_COLORS = {
+  calles: "#ea580c",
+  alumbrado: "#ca8a04",
+  basura: "#b45309",
+  alcantarillado: "#0e7490",
+  agua: "#2563eb",
+  ambiente: "#059669",
+  ocupacion: "#7c3aed",
+  mobiliario: "#e11d48",
+  otro: "#475569",
+};
+
+function getMarkerIcon(category, status) {
+  const color = CATEGORY_COLORS[category] || "#475569";
+  const isActive = !["resuelto", "cerrado", "rechazado", "duplicado"].includes(
+    status,
+  );
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 40" width="30" height="40">
+      <path d="M15 0 C6.7 0 0 6.7 0 15 C0 25 15 40 15 40 C15 40 30 25 30 15 C30 6.7 23.3 0 15 0 Z" 
+        fill="${color}" stroke="white" stroke-width="2" opacity="${isActive ? 1 : 0.6}"/>
+      <circle cx="15" cy="15" r="5" fill="white" opacity="${isActive ? 1 : 0.6}"/>
+      ${isActive ? "" : '<line x1="5" y1="5" x2="25" y2="35" stroke="white" stroke-width="2" opacity="0.5"/>'}
+    </svg>
+  `;
+
+  return L.icon({
+    iconUrl: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    iconSize: [30, 40],
+    iconAnchor: [15, 40],
+    popupAnchor: [0, -40],
+  });
+}
+
+// Coordenadas aproximadas por zona (Santo Domingo)
+const ZONE_COORDS = {
+  dn: { lat: 18.4861, lng: -69.9312 },
+  sde: { lat: 18.49, lng: -69.83 },
+  sdn: { lat: 18.54, lng: -69.89 },
+  sdo: { lat: 18.47, lng: -69.98 },
+  alc: { lat: 18.52, lng: -70.02 },
+  bch: { lat: 18.45, lng: -69.6 },
+  pbr: { lat: 18.56, lng: -70.08 },
+  sag: { lat: 18.53, lng: -69.78 },
+};
+
+function getReportCoords(report, index) {
+  const base = ZONE_COORDS[report.zone];
+  if (!base) return { lat: 18.4861, lng: -69.9312 };
+
+  const seed =
+    index * 0.001 + report.id.charCodeAt(report.id.length - 1) * 0.0005;
+  const latOffset = Math.sin(seed * 3.7) * 0.008;
+  const lngOffset = Math.cos(seed * 2.3) * 0.008;
+
+  return {
+    lat: base.lat + latOffset,
+    lng: base.lng + lngOffset,
+  };
+}
+
+const MapUpdater = ({ center, zoom }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (center) {
+      map.setView(center, zoom || 13);
+    }
+  }, [center, zoom, map]);
+  return null;
+};
+
+function ProfessionalMap({
+  reports,
+  selectedReportId,
+  onSelectReport,
+  height = 500,
+}) {
+  const [mapCenter, setMapCenter] = useState([18.4861, -69.9312]);
+  const [mapZoom, setMapZoom] = useState(12);
+  const mapRef = useRef(null);
+
+  useEffect(() => {
+    if (selectedReportId) {
+      const report = reports.find((r) => r.id === selectedReportId);
+      if (report) {
+        const coords = getReportCoords(report, reports.indexOf(report));
+        setMapCenter([coords.lat, coords.lng]);
+        setMapZoom(15);
+      }
+    }
+  }, [selectedReportId, reports]);
+
+  const groupedReports = useMemo(() => {
+    const groups = {};
+    reports.forEach((r, i) => {
+      const coords = getReportCoords(r, i);
+      const key = `${coords.lat.toFixed(4)},${coords.lng.toFixed(4)}`;
+      if (!groups[key]) {
+        groups[key] = { coords, reports: [] };
+      }
+      groups[key].reports.push(r);
+    });
+    return Object.values(groups);
+  }, [reports]);
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm"
+      style={{ height, position: "relative" }}
+    >
+      <MapContainer
+        center={mapCenter}
+        zoom={mapZoom}
+        style={{ height: "100%", width: "100%" }}
+        zoomControl={false}
+        ref={mapRef}
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        <ZoomControl position="topright" />
+        <MapUpdater center={mapCenter} zoom={mapZoom} />
+
+        {groupedReports.map((group, idx) => {
+          const count = group.reports.length;
+          const radius = 15 + count * 5;
+          const color =
+            count > 3 ? "#dc2626" : count > 1 ? "#f59e0b" : "#0ea5e9";
+          return (
+            <CircleMarker
+              key={`cluster-${idx}`}
+              center={[group.coords.lat, group.coords.lng]}
+              radius={Math.min(radius, 40)}
+              fillColor={color}
+              color="white"
+              weight={2}
+              opacity={0.8}
+              fillOpacity={0.3}
+            >
+              <Popup>
+                <div className="text-center">
+                  <p className="font-bold">{count} incidencias</p>
+                  <button
+                    className="text-xs text-blue-600 hover:underline mt-1"
+                    onClick={() => {
+                      const firstReport = group.reports[0];
+                      const coords = getReportCoords(
+                        firstReport,
+                        reports.indexOf(firstReport),
+                      );
+                      setMapCenter([coords.lat, coords.lng]);
+                      setMapZoom(14);
+                    }}
+                  >
+                    Ver detalles
+                  </button>
+                </div>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
+
+        {reports.map((report, index) => {
+          const coords = getReportCoords(report, index);
+          const isSelected = selectedReportId === report.id;
+          const icon = getMarkerIcon(report.category, report.status);
+
+          return (
+            <Marker
+              key={report.id}
+              position={[coords.lat, coords.lng]}
+              icon={icon}
+              eventHandlers={{
+                click: () => {
+                  onSelectReport(report.id);
+                  setMapCenter([coords.lat, coords.lng]);
+                  setMapZoom(14);
+                },
+              }}
+            >
+              <Popup>
+                <div className="min-w-[200px] max-w-[280px]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-mono text-slate-400">
+                      {report.code}
+                    </span>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STATUS_META[report.status]?.badge}`}
+                    >
+                      {STATUS_META[report.status]?.label}
+                    </span>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800 line-clamp-2">
+                    {report.desc}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    <span
+                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${getCategory(report.category).badge}`}
+                    >
+                      {getCategory(report.category).label}
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {getZone(report.zone)?.name}
+                    </span>
+                  </div>
+                  <button
+                    className="mt-2 text-xs font-semibold text-blue-600 hover:text-blue-800 w-full text-center border-t border-slate-100 pt-1.5"
+                    onClick={() => onSelectReport(report.id)}
+                  >
+                    Ver detalles →
+                  </button>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
+      </MapContainer>
+
+      {/* Leyenda */}
+      <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur rounded-xl shadow-lg p-3 border border-slate-200 z-[1000]">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+          Categorías
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(CATEGORY_COLORS)
+            .slice(0, 6)
+            .map(([key, color]) => (
+              <div key={key} className="flex items-center gap-1">
+                <span
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ background: color }}
+                />
+                <span className="text-[9px] text-slate-600">
+                  {getCategory(key)?.label || key}
+                </span>
+              </div>
+            ))}
+        </div>
+        <div className="flex items-center gap-3 mt-1.5 pt-1.5 border-t border-slate-100">
+          <div className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span className="text-[9px] text-slate-500">Activa</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+            <span className="text-[9px] text-slate-500">Cerrada</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-full bg-red-500 opacity-30" />
+            <span className="text-[9px] text-slate-500">Concentración</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// COMPONENTE DE GESTIÓN DE ROLES DE USUARIO
+// ============================================================================
+
+function AdminUserRoles({ users, onUpdateUserRole, currentUser }) {
+  const [editingUser, setEditingUser] = useState(null);
+  const [selectedRole, setSelectedRole] = useState("");
+  const [selectedInstitution, setSelectedInstitution] = useState("");
+
+  const handleStartEdit = (user) => {
+    setEditingUser(user.id);
+    setSelectedRole(user.role);
+    setSelectedInstitution(user.institutionId || "");
+  };
+
+  const handleSaveRole = (userId) => {
+    if (!selectedRole) return;
+    const updateData = { role: selectedRole };
+    if (selectedRole === "gestor" || selectedRole === "supervisor") {
+      if (!selectedInstitution) {
+        alert("Debes seleccionar una institución para este rol");
+        return;
+      }
+      updateData.institutionId = selectedInstitution;
+    } else {
+      updateData.institutionId = null;
+    }
+    onUpdateUserRole(userId, updateData);
+    setEditingUser(null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingUser(null);
+    setSelectedRole("");
+    setSelectedInstitution("");
+  };
+
+  const filteredUsers = users.filter((u) => u.id !== currentUser.id);
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 pt-4 pb-8">
+      <SectionHeading
+        eyebrow="Gestión de permisos"
+        title="Asignar roles a usuarios"
+        action={
+          <div className="text-[11px] text-slate-400 flex items-center gap-1">
+            <Shield size={14} /> Administración de roles
+          </div>
+        }
+      />
+
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-4 py-2.5 bg-slate-50 text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-slate-200">
+          <span>Usuario</span>
+          <span>Rol actual</span>
+          <span>Institución</span>
+          <span className="text-right">Acciones</span>
+        </div>
+
+        {filteredUsers.map((u) => {
+          const isEditing = editingUser === u.id;
+
+          return (
+            <div
+              key={u.id}
+              className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center px-4 py-2.5 border-b border-slate-100 last:border-b-0 hover:bg-slate-50 transition"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Avatar seed={u.seed} size={30} />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-700 truncate">
+                    {u.name}
+                  </p>
+                  <p className="text-[10px] text-slate-400 truncate">
+                    {u.email}
+                  </p>
+                </div>
+              </div>
+
+              {isEditing ? (
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={selectedRole}
+                    onChange={(e) => setSelectedRole(e.target.value)}
+                    className="text-xs rounded-lg border border-slate-200 px-2 py-1 bg-white outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="ciudadano">Ciudadano</option>
+                    <option value="gestor">Gestor</option>
+                    <option value="supervisor">Supervisor</option>
+                  </select>
+                </div>
+              ) : (
+                <span
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded-full text-center whitespace-nowrap ${
+                    u.role === "admin"
+                      ? "bg-slate-800 text-white"
+                      : u.role === "supervisor"
+                        ? "bg-fuchsia-100 text-fuchsia-700"
+                        : u.role === "gestor"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-teal-100 text-teal-700"
+                  }`}
+                >
+                  {u.role === "admin"
+                    ? "Admin"
+                    : u.role === "supervisor"
+                      ? "Supervisor"
+                      : u.role === "gestor"
+                        ? "Gestor"
+                        : "Ciudadano"}
+                </span>
+              )}
+
+              {isEditing ? (
+                <div className="min-w-[120px]">
+                  {(selectedRole === "gestor" ||
+                    selectedRole === "supervisor") && (
+                    <select
+                      value={selectedInstitution}
+                      onChange={(e) => setSelectedInstitution(e.target.value)}
+                      className="text-[10px] rounded-lg border border-slate-200 px-2 py-1 bg-white w-full outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="">Seleccionar institución</option>
+                      {INSTITUTIONS.filter((i) => i.id !== "otra").map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.short}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {selectedRole === "ciudadano" && (
+                    <span className="text-[10px] text-slate-400">
+                      Sin institución
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-[11px] text-slate-500 truncate">
+                  {u.role === "gestor" || u.role === "supervisor"
+                    ? u.institutionId
+                      ? getInstitution(u.institutionId).short
+                      : "—"
+                    : "—"}
+                </span>
+              )}
+
+              <div className="flex items-center justify-end gap-1">
+                {isEditing ? (
+                  <>
+                    <button
+                      onClick={() => handleSaveRole(u.id)}
+                      className="p-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition"
+                      title="Guardar"
+                    >
+                      <Save size={14} />
+                    </button>
+                    <button
+                      onClick={handleCancelEdit}
+                      className="p-1.5 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300 transition"
+                      title="Cancelar"
+                    >
+                      <XCircle size={14} />
+                    </button>
+                  </>
+                ) : (
+                  u.role !== "admin" && (
+                    <button
+                      onClick={() => handleStartEdit(u)}
+                      className="p-1.5 rounded-lg bg-slate-100 text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition"
+                      title="Editar rol"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 p-4">
+        <p className="text-[11px] font-semibold text-blue-800 flex items-center gap-1.5">
+          <Info size={14} /> Gestión de roles
+        </p>
+        <p className="text-[11px] text-blue-700 mt-1">
+          <strong>Ciudadano:</strong> Solo puede reportar y dar seguimiento a
+          sus incidencias.
+          <br />
+          <strong>Gestor:</strong> Puede validar, clasificar, asignar y
+          gestionar incidencias de su institución.
+          <br />
+          <strong>Supervisor:</strong> Tiene todas las capacidades del gestor
+          más arbitraje de escalamientos y supervisión.
+          <br />
+          <strong>Admin:</strong> Control total del sistema (este rol no se
+          puede modificar).
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// SHELL / NAVIGATION
+// ============================================================================
 
 const NAV_BY_ROLE = {
   ciudadano: [
@@ -3830,6 +3763,7 @@ const NAV_BY_ROLE = {
     { id: "audit", label: "Auditoría", Icon: History },
     { id: "rules", label: "Reglas", Icon: Settings2 },
     { id: "users", label: "Usuarios", Icon: Users },
+    { id: "adminRoles", label: "Roles", Icon: Shield },
     { id: "notify", label: "Avisos", Icon: Bell },
     { id: "profile", label: "Perfil", Icon: User },
   ],
@@ -3943,7 +3877,7 @@ function AppShell({
 }
 
 /* ============================================================================
-   CITIZEN — FEED
+   CITIZEN — FEED (COMPONENTES DEL CIUDADANO)
 ============================================================================ */
 
 function AuthorLine({ report, users, onOpenProfile }) {
@@ -4379,58 +4313,33 @@ function CitizenComposer({ onPublish, showToast }) {
   );
 }
 
-/* ------------------------------ CITIZEN MAP -------------------------------- */
+// ----------------------------- CITIZEN MAP --------------------------------
 
 function CitizenMap({ reports }) {
-  const [zone, setZone] = useState(null);
-  const filtered = zone ? reports.filter((r) => r.zone === zone) : reports;
+  const [mapReportId, setMapReportId] = useState(null);
+
   return (
-    <div className="max-w-xl mx-auto px-4 pt-4 pb-6">
+    <div className="max-w-5xl mx-auto px-4 pt-4 pb-6">
       <SectionHeading
         eyebrow="Mapa comunitario"
-        title="¿Dónde están los reportes?"
+        title="Incidencias en tu ciudad"
       />
-      <ZoneMap
+      <ProfessionalMap
         reports={reports}
-        selectedZone={zone}
-        onSelectZone={setZone}
-        height={340}
+        selectedReportId={mapReportId}
+        onSelectReport={(id) => {
+          setMapReportId(id);
+        }}
+        height={550}
       />
-      {zone && (
-        <div className="mt-4">
-          <p className="text-xs font-bold text-slate-500 mb-2">
-            {getZone(zone).name} · {filtered.length} reportes
-          </p>
-          <div className="space-y-2">
-            {filtered.slice(0, 6).map((r) => (
-              <div
-                key={r.id}
-                className="flex items-center gap-3 bg-white rounded-xl border border-slate-200 p-2.5"
-              >
-                <img
-                  src={r.photos[0]}
-                  className="w-12 h-12 rounded-lg object-cover shrink-0"
-                  alt=""
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-slate-700 truncate">
-                    {r.desc}
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <CategoryPill id={r.category} />
-                    <StatusPill status={r.status} />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <p className="text-[10px] text-slate-400 mt-2 text-center">
+        Haz clic en cualquier marcador para ver los detalles de la incidencia
+      </p>
     </div>
   );
 }
 
-/* -------------------------------- PROFILE ---------------------------------- */
+// -------------------------------- PROFILE ----------------------------------
 
 function ProfileModal({ author, reports, onClose }) {
   if (!author) return null;
@@ -4803,9 +4712,9 @@ function CitizenProfile({
   );
 }
 
-/* ============================================================================
-   CITIZEN — ESTADÍSTICAS
-============================================================================ */
+// ============================================================================
+// CITIZEN — ESTADÍSTICAS
+// ============================================================================
 
 function StatCard({ label, value, sub, Icon, tone = "teal", trend }) {
   const toneMap = {
@@ -5084,14 +4993,16 @@ function CitizenStats({ user, reports, users }) {
   );
 }
 
-/* ---------------------------- REPORT DETAIL SHEET -------------------------- */
+// ============================================================================
+// REPORT DETAIL SHEET
+// ============================================================================
 
-/* Sección de imágenes por fase de evidencia (antes / durante / después). */
 const EVIDENCE_TONE_TEXT = {
   slate: "text-slate-500",
   indigo: "text-indigo-500",
   emerald: "text-emerald-600",
 };
+
 function EvidenceGroup({ title, photos, tone = "slate", onAdd, addLabel }) {
   if (!photos?.length && !onAdd) return null;
   return (
@@ -5131,8 +5042,6 @@ function EvidenceGroup({ title, photos, tone = "slate", onAdd, addLabel }) {
   );
 }
 
-/* Progreso simplificado que ve el ciudadano — mapea los 15 estados internos
-   a 6 hitos entendibles, sin exponerle el vocabulario operativo interno. */
 function CitizenProgressTracker({ report }) {
   if (report.status === "rechazado" || report.status === "duplicado") {
     const entry = [...report.timeline].reverse().find((t) => t.reason);
@@ -6248,9 +6157,9 @@ function ReportDetailModal({
   );
 }
 
-/* ============================================================================
-   GESTOR (asignador / clasificador)
-============================================================================ */
+// ============================================================================
+// GESTOR (asignador / clasificador)
+// ============================================================================
 
 function exportReportsCsv(reports, filename) {
   const header = [
@@ -6285,10 +6194,6 @@ function exportReportsCsv(reports, filename) {
   URL.revokeObjectURL(url);
 }
 
-/* ------------------------- GESTOR — OPERATIONS CENTER (§25) ----------------
-   Bandeja operativa del gestor. Los 8 indicadores de arriba son el
-   "Operations Center" del brief: cada uno es un botón que filtra la lista de
-   abajo al hacer clic — no son solo números decorativos. */
 function GestorDashboard({ reports, user, onOpenDetail, showToast }) {
   const [tab, setTab] = useState("nuevas");
   const [q, setQ] = useState("");
@@ -6348,7 +6253,6 @@ function GestorDashboard({ reports, user, onOpenDetail, showToast }) {
         (b.priority === "critica" ? -1 : 1),
     );
 
-  /* Los 8 indicadores del Operations Center — mismo orden que el brief §25. */
   const indicators = [
     {
       id: "vencidas",
@@ -6550,14 +6454,10 @@ function GestorDashboard({ reports, user, onOpenDetail, showToast }) {
   );
 }
 
-/* ============================================================================
-   SUPERVISOR CONTROL CENTER (§26 del brief)
-   Vista de arbitraje: no reemplaza la bandeja del gestor (el supervisor la
-   conserva), sino que agrega la capa de supervisión — carga de trabajo por
-   responsable, instituciones con retraso, y los casos que requieren
-   intervención directa del supervisor (críticos, estancados, escalados,
-   reabiertos, recurrentes).
-============================================================================ */
+// ============================================================================
+// SUPERVISOR CONTROL CENTER
+// ============================================================================
+
 function SupervisorSection({ title, count, tone = "slate", children, empty }) {
   const TONE = {
     slate: "text-slate-700",
@@ -6583,6 +6483,7 @@ function SupervisorSection({ title, count, tone = "slate", children, empty }) {
     </div>
   );
 }
+
 function SupervisorCaseRow({ r, onOpenDetail, extra }) {
   return (
     <button
@@ -6607,6 +6508,7 @@ function SupervisorCaseRow({ r, onOpenDetail, extra }) {
     </button>
   );
 }
+
 function SupervisorControlCenter({
   reports,
   user,
@@ -6625,8 +6527,6 @@ function SupervisorControlCenter({
     (r) => (r.reopenedCount || 0) > 0 && isActiveReport(r),
   );
 
-  /* Carga de trabajo por responsable (§7): activos, críticos y vencidos por
-     persona, para detectar sobrecarga a simple vista. */
   const responsables = getResponsablesFor(user.institutionId);
   const workload = responsables
     .map((resp) => {
@@ -6644,8 +6544,6 @@ function SupervisorControlCenter({
     .sort((a, b) => b.active - a.active);
   const maxLoad = Math.max(1, ...workload.map((w) => w.active));
 
-  /* Problemas recurrentes detectados en la institución (§16): agrupa por
-     categoría + zona con 3+ incidencias activas o cerradas en 30 días. */
   const recurringGroups = useMemo(() => {
     const WINDOW = 30 * 86400000;
     const now = Date.now();
@@ -6926,9 +6824,10 @@ function SupervisorControlCenter({
   );
 }
 
-/* ============================================================================
-   CASOS MAESTROS Y PLAN DE INTERVENCIÓN (§16-17 del brief)
-============================================================================ */
+// ============================================================================
+// CASOS MAESTROS Y PLAN DE INTERVENCIÓN
+// ============================================================================
+
 const MASTER_CASE_STATUS_META = {
   abierto: {
     label: "Abierto",
@@ -6943,8 +6842,7 @@ const MASTER_CASE_STATUS_META = {
     badge: "bg-emerald-100 text-emerald-700 border border-emerald-200",
   },
 };
-/* Plantilla de acciones sugeridas para un plan de intervención — el gestor
-   puede editar el texto antes de crear el plan, no está forzado a usarlas. */
+
 const INTERVENTION_ACTION_TEMPLATE = [
   "Inspección",
   "Limpieza",
@@ -7352,7 +7250,9 @@ function MasterCaseDetailModal({
   );
 }
 
-/* ---------------------------- GESTOR — ESTADÍSTICAS ------------------------ */
+// ============================================================================
+// GESTOR — ESTADÍSTICAS
+// ============================================================================
 
 function GestorStats({ reports, user }) {
   const mine = reports.filter((r) => r.institutionId === user.institutionId);
@@ -7597,9 +7497,9 @@ function GestorStats({ reports, user }) {
   );
 }
 
-/* ============================================================================
-   ADMIN
-============================================================================ */
+// ============================================================================
+// ADMIN
+// ============================================================================
 
 const CHART_COLORS = [
   "#0f766e",
@@ -8263,12 +8163,10 @@ function AdminUsers({ users, onCreate }) {
   );
 }
 
-/* ------------------------- AUDITORÍA GLOBAL (§36) --------------------------
-   Bitácora consultable de TODOS los cambios de TODOS los casos (expedientes
-   y casos maestros): usuario, fecha, acción, campo, valor anterior, valor
-   nuevo y motivo. Disponible para Supervisor y Administrador (§2/§3 — los
-   gestores no pueden borrar auditoría, y aquí ni siquiera se ofrece un
-   botón para hacerlo: es de solo lectura). */
+// ============================================================================
+// AUDITORÍA GLOBAL
+// ============================================================================
+
 const AUDIT_RANGE_OPTIONS = [
   { id: "todo", label: "Todo el histórico", ms: null },
   { id: "24h", label: "Últimas 24 horas", ms: 24 * 3600000 },
@@ -8461,13 +8359,10 @@ function AuditLogView({
   );
 }
 
-/* --------------------------- MOTOR DE REGLAS — UI (§33) --------------------
-   Pantalla de administrador para definir reglas IF/THEN de enrutamiento y
-   SLA. Solo lectura/edición del objeto `rules` que vive en App(); las
-   funciones puras applyRoutingRule/applySlaHours/shouldNotifySlaBreach/
-   getRecurringThreshold (arriba, junto a PRIORITY_ORDER) son las que
-   realmente aplican las reglas en handlePublish y handleReportAction — esta
-   vista solo las edita. */
+// ============================================================================
+// MOTOR DE REGLAS — UI
+// ============================================================================
+
 function RuleToggle({ on, onClick }) {
   return (
     <button
@@ -8793,14 +8688,14 @@ function AdminRulesView({ rules, setRules }) {
   );
 }
 
-/* ============================================================================
-   ROOT APP
-============================================================================ */
+// ============================================================================
+// ROOT APP
+// ============================================================================
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [screen, setScreen] = useState("landing"); // landing | auth
-  const [authScreen, setAuthScreen] = useState("login"); // login | register1 | register2
+  const [screen, setScreen] = useState("landing");
+  const [authScreen, setAuthScreen] = useState("login");
   const [regForm, setRegForm] = useState({
     name: "",
     cedula: "",
@@ -8834,18 +8729,13 @@ export default function App() {
   const setDetailReport = (r) => setDetailReportId(r ? r.id : null);
   const [detailMasterCaseId, setDetailMasterCaseId] = useState(null);
   const [mapMode, setMapMode] = useState("city");
+  const [mapReportId, setMapReportId] = useState(null);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2800);
   }, []);
 
-  // IMPORTANTE: este hook debe declararse siempre, en el mismo orden, sin
-  // importar si hay sesión activa o no — de lo contrario React lanza
-  // "Rendered more hooks than during the previous render" al pasar de
-  // landing/auth (sin sesión) a la app principal (con sesión), porque este
-  // useMemo se saltaba en los primeros renders. buildNotificationsForUser
-  // ya contempla session === null y devuelve [] en ese caso.
   const notifications = useMemo(
     () => buildNotificationsForUser(session, reports, rules),
     [session, reports, rules],
@@ -8861,10 +8751,33 @@ export default function App() {
           : "dashboard",
     );
   };
+
   const handleLogout = () => {
     setSession(null);
     setAuthScreen("login");
     setScreen("landing");
+  };
+
+  const handleUpdateUserRole = (userId, updateData) => {
+    setUsers((prevUsers) =>
+      prevUsers.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              role: updateData.role,
+              institutionId: updateData.institutionId || null,
+            }
+          : u,
+      ),
+    );
+    if (session && session.id === userId) {
+      setSession((s) => ({
+        ...s,
+        role: updateData.role,
+        institutionId: updateData.institutionId || null,
+      }));
+    }
+    showToast(`Rol actualizado correctamente`);
   };
 
   const handleLike = (id) => {
@@ -8887,10 +8800,6 @@ export default function App() {
     const now = Date.now();
     const sub = getSubcategory(subcategory);
     const suggestedPriority = sub ? sub.defaultPriority : "media";
-    // Motor de reglas (§33): institución y SLA por defecto pasan primero por
-    // las reglas del administrador (si hay alguna habilitada que coincida);
-    // si no hay ninguna, el comportamiento es el mismo de siempre
-    // (zoneToInstitution / PRIORITY_META).
     const routedInstitutionId = applyRoutingRule(
       rules,
       category,
@@ -8951,9 +8860,6 @@ export default function App() {
     showToast(`Reporte ${newReport.code} creado — te avisaremos en cada etapa`);
   };
 
-  /** Ejecuta una transición de estado (una de TRANSITIONS) con su payload
-      (motivo, clasificación, asignación o destino de escalamiento) y deja
-      registro auditable en la línea de tiempo del caso. */
   const handleReportAction = (reportId, action, payload = {}) => {
     setReports((rs) =>
       rs.map((r) => {
@@ -8973,11 +8879,6 @@ export default function App() {
           const sub = getSubcategory(updated.subcategory);
           entry.label = `Clasificado como ${getCategory(updated.category).label} → ${sub ? sub.label : "—"}`;
         } else if (action.needsAssignment) {
-          // Motor de reglas (§33): si el gestor no eligió institución en el
-          // formulario, se usa la regla de enrutamiento configurada por el
-          // administrador (si aplica) antes de conservar la institución
-          // actual; el SLA de la asignación también pasa por la regla de SLA
-          // configurada para la prioridad vigente del caso.
           updated.institutionId =
             payload.institutionId ||
             applyRoutingRule(rules, r.category, r.subcategory, r.institutionId);
@@ -9034,8 +8935,6 @@ export default function App() {
     showToast("Evidencia agregada al expediente");
   };
 
-  /** Crea una tarea de trabajo dentro del expediente (§8). Si depende de
-      otra tarea aún no completada, nace en estado "bloqueada". */
   const handleAddTask = (reportId, taskData) => {
     setReports((rs) =>
       rs.map((r) => {
@@ -9077,10 +8976,6 @@ export default function App() {
     showToast("Tarea agregada al expediente");
   };
 
-  /** Cambia el estado de una tarea. Respeta dependencias: una tarea bloqueada
-      no puede iniciarse ni completarse hasta que su dependencia esté
-      completada. Al completar una tarea, desbloquea automáticamente las que
-      dependían de ella y que ya no tengan impedimento. */
   const handleUpdateTaskStatus = (reportId, taskId, newStatus) => {
     setReports((rs) =>
       rs.map((r) => {
@@ -9090,7 +8985,7 @@ export default function App() {
           if (t.dependsOn) {
             const dep = (r.tasks || []).find((x) => x.id === t.dependsOn);
             if (dep && dep.status !== "completada" && newStatus !== "bloqueada")
-              return t; // impedido
+              return t;
           }
           return {
             ...t,
@@ -9124,7 +9019,6 @@ export default function App() {
     showToast("Tarea actualizada");
   };
 
-  /** Solicita una inspección física en sitio (§18). */
   const handleRequestInspection = (reportId, data) => {
     setReports((rs) =>
       rs.map((r) => {
@@ -9159,7 +9053,6 @@ export default function App() {
     showToast("Inspección solicitada");
   };
 
-  /** Registra el resultado de una inspección ya realizada. */
   const handleRecordInspectionResult = (reportId, inspectionId, data) => {
     setReports((rs) =>
       rs.map((r) => {
@@ -9193,8 +9086,6 @@ export default function App() {
     showToast("Resultado de inspección registrado");
   };
 
-  /** Fusiona un reporte con otro considerado principal: el actual pasa a
-      "duplicado" enlazado al principal, sin borrar su información (§8/§18). */
   const handleMergeDuplicate = (reportId, targetId) => {
     setReports((rs) =>
       rs.map((r) => {
@@ -9222,8 +9113,6 @@ export default function App() {
     showToast("Reportes fusionados — la trazabilidad original se conserva");
   };
 
-  /** Confirmación ciudadana tras el cierre (§5/§17): si el ciudadano indica
-      que el problema continúa, se reabre automáticamente hacia "en_gestion". */
   const handleConfirmResolution = (reportId, solved) => {
     if (solved) {
       setReports((rs) =>
@@ -9270,14 +9159,6 @@ export default function App() {
     );
   };
 
-  /* ========================================================================
-     CASO MAESTRO Y PLAN DE INTERVENCIÓN (§16-17 del brief)
-     Un caso maestro agrupa incidencias que comparten categoría + zona dentro
-     de una ventana reciente — la señal de que no son reportes aislados sino
-     síntomas de un mismo problema de infraestructura. El plan de intervención
-     es la respuesta operativa: pasa de "cerrar reportes" a "resolver el
-     problema" y se mide comparando incidencias antes/después de ejecutarlo.
-  ======================================================================== */
   const handleCreateMasterCase = (category, zone, reportIds) => {
     const num = String(masterCases.length + 1).padStart(4, "0");
     const now = Date.now();
@@ -9355,9 +9236,6 @@ export default function App() {
     );
   };
 
-  /** Mide el resultado del plan (§17): compara cuántas incidencias nuevas de
-      la misma categoría+zona aparecieron desde que se creó el plan contra la
-      línea base. Si disminuyeron, el plan funcionó. */
   const handleMeasureIntervention = (masterCaseId) => {
     setMasterCases((list) =>
       list.map((mc) => {
@@ -9581,15 +9459,23 @@ export default function App() {
           view === "stats" && <GestorStats reports={reports} user={session} />}
         {(session.role === "gestor" || session.role === "supervisor") &&
           view === "map" && (
-            <OperationalMap
-              reports={reports}
-              institutionScope={session.institutionId}
-              mapMode={mapMode}
-              setMapMode={setMapMode}
-              onOpenReport={openReportById}
-              title="Mapa de incidencias"
-              eyebrow="Cobertura territorial"
-            />
+            <div className="max-w-5xl mx-auto px-4 pt-4 pb-6">
+              <SectionHeading
+                eyebrow="Mapa operativo"
+                title="Incidencias en tu área"
+              />
+              <ProfessionalMap
+                reports={reports.filter(
+                  (r) => r.institutionId === session.institutionId,
+                )}
+                selectedReportId={mapReportId}
+                onSelectReport={(id) => {
+                  setMapReportId(id);
+                  setDetailReportId(id);
+                }}
+                height={550}
+              />
+            </div>
           )}
         {session.role === "supervisor" && view === "audit" && (
           <AuditLogView
@@ -9621,14 +9507,21 @@ export default function App() {
           <AdminDashboard reports={reports} />
         )}
         {session.role === "admin" && view === "map" && (
-          <OperationalMap
-            reports={reports}
-            mapMode={mapMode}
-            setMapMode={setMapMode}
-            onOpenReport={openReportById}
-            title="Mapa de reportes"
-            eyebrow="Control nacional"
-          />
+          <div className="max-w-5xl mx-auto px-4 pt-4 pb-6">
+            <SectionHeading
+              eyebrow="Control nacional"
+              title="Mapa de reportes"
+            />
+            <ProfessionalMap
+              reports={reports}
+              selectedReportId={mapReportId}
+              onSelectReport={(id) => {
+                setMapReportId(id);
+                setDetailReportId(id);
+              }}
+              height={550}
+            />
+          </div>
         )}
         {session.role === "admin" && view === "audit" && (
           <AuditLogView
@@ -9644,6 +9537,13 @@ export default function App() {
         )}
         {session.role === "admin" && view === "users" && (
           <AdminUsers users={users} onCreate={handleCreateUser} />
+        )}
+        {session.role === "admin" && view === "adminRoles" && (
+          <AdminUserRoles
+            users={users}
+            onUpdateUserRole={handleUpdateUserRole}
+            currentUser={session}
+          />
         )}
         {session.role === "admin" && view === "notify" && (
           <NotificationsView
