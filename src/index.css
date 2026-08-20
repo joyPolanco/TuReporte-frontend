@@ -1,0 +1,223 @@
+/* Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   TuReporte — Global Styles & Design System
+   ============================================================================ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Typography Classes */
+.tr-root {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+.tr-display {
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+}
+.tr-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Hidden Scrollbar */
+.tr-scroll::-webkit-scrollbar { display: none; }
+.tr-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ============================================================================
+   Glassmorphism
+   ============================================================================ */
+.tr-glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.tr-glass-dark {
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tr-glass-card {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 16px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* ============================================================================
+   Animations
+   ============================================================================ */
+@keyframes tr-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.35); }
+  100% { box-shadow: 0 0 0 12px rgba(20, 184, 166, 0); }
+}
+.tr-pulse {
+  animation: tr-pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes tr-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tr-fade-up {
+  animation: tr-fade-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes tr-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.tr-fade-in {
+  animation: tr-fade-in 0.3s ease both;
+}
+
+@keyframes tr-slide-up {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tr-slide-up {
+  animation: tr-slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes tr-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.tr-float {
+  animation: tr-float 6s ease-in-out infinite;
+}
+
+@keyframes tr-float-delayed {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-15px); }
+}
+.tr-float-delayed {
+  animation: tr-float-delayed 8s ease-in-out infinite;
+  animation-delay: 2s;
+}
+
+@keyframes tr-glow-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.tr-glow-pulse {
+  animation: tr-glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes tr-spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.tr-spin-slow {
+  animation: tr-spin-slow 20s linear infinite;
+}
+
+/* ============================================================================
+   Leaflet Overrides
+   ============================================================================ */
+.leaflet-container {
+  font-family: 'Inter', system-ui, sans-serif;
+  border-radius: 0 0 1rem 1rem;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 16px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: blur(12px);
+}
+
+.leaflet-popup-content {
+  margin: 12px 16px !important;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.leaflet-popup-tip {
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.1) !important;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1) !important;
+}
+
+.leaflet-control-zoom a {
+  background: rgba(255, 255, 255, 0.9) !important;
+  backdrop-filter: blur(8px) !important;
+  color: #334155 !important;
+  border: none !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  font-size: 18px !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: rgba(255, 255, 255, 1) !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(255, 255, 255, 0.7) !important;
+  backdrop-filter: blur(8px) !important;
+  border-radius: 8px !important;
+  font-size: 9px !important;
+  padding: 2px 6px !important;
+  margin: 8px !important;
+}
+
+/* Custom map markers */
+.tr-map-marker {
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
+}
+.tr-map-marker:hover {
+  transform: scale(1.4);
+  z-index: 9999 !important;
+}
+
+.tr-map-marker-urgent {
+  animation: tr-pulse-ring 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ============================================================================
+   Utility overrides
+   ============================================================================ */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Smooth transitions globally */
+* {
+  scroll-behavior: smooth;
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid rgba(20, 184, 166, 0.5);
+  outline-offset: 2px;
+}
